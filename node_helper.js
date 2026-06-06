@@ -2,7 +2,6 @@
 
 const NodeHelper = require("node_helper");
 const { execSync, spawn } = require("child_process");
-const net = require("net");
 const path = require("path");
 const fs = require("fs");
 
@@ -10,10 +9,8 @@ module.exports = NodeHelper.create({
     start() {
         this.config = null;
         this.pirProcess = null;
-        this.socketClient = null;
         this.offTimer = null;
         this.displayOn = true;
-        this.reconnectTimer = null;
         console.log("[MMM-PIRMotion] node_helper started");
     },
 
@@ -45,10 +42,7 @@ module.exports = NodeHelper.create({
 
     /* ── motion events ────────────────────────────────────── */
     onMotionStart() {
-        if (this.offTimer) {
-            clearTimeout(this.offTimer);
-            this.offTimer = null;
-        }
+        if (this.offTimer) { clearTimeout(this.offTimer); this.offTimer = null; }
         this.setDisplay(true);
         this.sendSocketNotification("MOTION", { active: true });
     },
@@ -62,51 +56,6 @@ module.exports = NodeHelper.create({
         }, this.config.timeout * 1000);
     },
 
-    /* ── Unix socket client ───────────────────────────────── */
-    connectSocket() {
-        const sockPath = this.config.socketPath || "/tmp/mmm-pir.sock";
-
-        const tryConnect = () => {
-            if (this.socketClient) return;
-
-            const client = net.createConnection(sockPath);
-            let buf = "";
-
-            client.on("connect", () => {
-                console.log("[MMM-PIRMotion] connected to pir_daemon socket");
-                this.socketClient = client;
-                if (this.reconnectTimer) { clearTimeout(this.reconnectTimer); this.reconnectTimer = null; }
-            });
-
-            client.on("data", (data) => {
-                buf += data.toString();
-                let nl;
-                while ((nl = buf.indexOf("\n")) !== -1) {
-                    const line = buf.slice(0, nl).trim();
-                    buf = buf.slice(nl + 1);
-                    if (!line) continue;
-                    try {
-                        const msg = JSON.parse(line);
-                        if (msg.event === "motion_start") this.onMotionStart();
-                        else if (msg.event === "motion_end")  this.onMotionEnd();
-                    } catch { /* ignore malformed */ }
-                }
-            });
-
-            client.on("error", (err) => {
-                console.warn(`[MMM-PIRMotion] socket error: ${err.message}`);
-            });
-
-            client.on("close", () => {
-                this.socketClient = null;
-                console.warn("[MMM-PIRMotion] pir_daemon disconnected — reconnecting in 5 s");
-                this.reconnectTimer = setTimeout(tryConnect, 5000);
-            });
-        };
-
-        tryConnect();
-    },
-
     /* ── daemon lifecycle ─────────────────────────────────── */
     startDaemon() {
         const daemonBin = path.join(__dirname, "pir_daemon");
@@ -116,27 +65,37 @@ module.exports = NodeHelper.create({
             return;
         }
 
-        const args = [
-            "-g", String(this.config.gpioPin),
-            "-s", this.config.socketPath || "/tmp/mmm-pir.sock"
-        ];
+        this.pirProcess = spawn(daemonBin, ["-g", String(this.config.gpioPin)], {
+            stdio: ["ignore", "pipe", "pipe"]
+        });
 
-        this.pirProcess = spawn(daemonBin, args, { stdio: ["ignore", "ignore", "pipe"] });
-        this.pirProcess.stderr.on("data", (d) => process.stderr.write(`[pir_daemon] ${d}`));
+        let buf = "";
+        this.pirProcess.stdout.on("data", (data) => {
+            buf += data.toString();
+            let nl;
+            while ((nl = buf.indexOf("\n")) !== -1) {
+                const line = buf.slice(0, nl).trim();
+                buf = buf.slice(nl + 1);
+                if (!line) continue;
+                try {
+                    const msg = JSON.parse(line);
+                    if (msg.event === "motion_start") this.onMotionStart();
+                    else if (msg.event === "motion_end") this.onMotionEnd();
+                } catch { /* ignore malformed */ }
+            }
+        });
+
+        this.pirProcess.stderr.on("data", (d) => process.stderr.write(d.toString()));
+
         this.pirProcess.on("exit", (code) => {
             console.error(`[MMM-PIRMotion] pir_daemon exited (code ${code}) — restarting in 10 s`);
             this.pirProcess = null;
             setTimeout(() => this.startDaemon(), 10000);
         });
-
-        /* give daemon 500 ms to create the socket, then connect */
-        setTimeout(() => this.connectSocket(), 500);
     },
 
     stop() {
-        if (this.reconnectTimer) clearTimeout(this.reconnectTimer);
         if (this.offTimer) clearTimeout(this.offTimer);
-        if (this.socketClient) { this.socketClient.destroy(); this.socketClient = null; }
         if (this.pirProcess) { this.pirProcess.kill("SIGTERM"); this.pirProcess = null; }
     }
 });
