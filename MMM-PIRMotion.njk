@@ -1,0 +1,5 @@
+{% if showIndicator %}
+<div class="pir-indicator {{ 'pir-active' if motionActive else 'pir-idle' }}"
+     title="{{ 'Motion detected' if motionActive else 'No motion' }}">
+</div>
+{% endif %}

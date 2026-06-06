@@ -1,0 +1,26 @@
+.pir-indicator {
+    width: 8px;
+    height: 8px;
+    border-radius: 50%;
+    position: fixed;
+    bottom: 8px;
+    right: 8px;
+    opacity: 0.6;
+    transition: background-color 0.4s ease, opacity 0.4s ease;
+}
+
+.pir-active {
+    background-color: #4caf50;
+    box-shadow: 0 0 6px #4caf50;
+    opacity: 1;
+}
+
+.pir-idle {
+    background-color: #555;
+}
+
+/* optional: dim all other content while display is flagged off */
+body.pir-display-off .region:not(.pir-indicator) {
+    opacity: 0;
+    transition: opacity 1s ease;
+}
