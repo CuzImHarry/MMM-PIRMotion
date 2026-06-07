@@ -6,9 +6,8 @@ Module.register("MMM-PIRMotion", {
         timeout: 120,                   /* seconds before display turns off */
         display: "HDMI-1",             /* xrandr / wlr-randr output name */
         displayMethod: "xrandr",        /* "xrandr" or "wlr-randr" */
-        socketPath: "/tmp/mmm-pir.sock",
-        showIndicator: true,            /* tiny dot in the corner */
-        animateModules: true            /* fade non-fullscreen modules with display state */
+        showIndicator: true,
+        animateModules: false
     },
 
     motionActive: false,

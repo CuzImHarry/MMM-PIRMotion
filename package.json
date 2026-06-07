@@ -1,0 +1,11 @@
+{
+  "name": "mmm-pirmotion",
+  "version": "1.0.0",
+  "description": "MagicMirror² module for HC-SR501 PIR motion sensor — interrupt-driven HDMI auto on/off",
+  "main": "MMM-PIRMotion.js",
+  "keywords": ["magicmirror", "pir", "motion", "hc-sr501", "gpio", "hdmi"],
+  "license": "MIT",
+  "dependencies": {
+    "onoff": "^6.0.3"
+  }
+}

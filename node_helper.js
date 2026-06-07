@@ -1,14 +1,13 @@
 "use strict";
 
 const NodeHelper = require("node_helper");
-const { execSync, spawn } = require("child_process");
+const { execSync } = require("child_process");
 const path = require("path");
-const fs = require("fs");
 
 module.exports = NodeHelper.create({
     start() {
         this.config = null;
-        this.pirProcess = null;
+        this.pir = null;
         this.offTimer = null;
         this.displayOn = true;
         console.log("[MMM-PIRMotion] node_helper started");
@@ -17,7 +16,7 @@ module.exports = NodeHelper.create({
     socketNotificationReceived(notification, payload) {
         if (notification === "CONFIG") {
             this.config = payload;
-            this.startDaemon();
+            this.startSensor();
         }
     },
 
@@ -56,46 +55,28 @@ module.exports = NodeHelper.create({
         }, this.config.timeout * 1000);
     },
 
-    /* ── daemon lifecycle ─────────────────────────────────── */
-    startDaemon() {
-        const daemonBin = path.join(__dirname, "pir_daemon");
-
-        if (!fs.existsSync(daemonBin)) {
-            console.error("[MMM-PIRMotion] pir_daemon binary not found — run 'make' in the module directory");
+    /* ── GPIO via onoff ───────────────────────────────────── */
+    startSensor() {
+        let Gpio;
+        try {
+            Gpio = require("onoff").Gpio;
+        } catch {
+            console.error("[MMM-PIRMotion] 'onoff' package not found — run: npm install onoff");
             return;
         }
 
-        this.pirProcess = spawn(daemonBin, ["-g", String(this.config.gpioPin)], {
-            stdio: ["ignore", "pipe", "pipe"]
+        this.pir = new Gpio(this.config.gpioPin, "in", "both");
+        this.pir.watch((err, value) => {
+            if (err) { console.error("[MMM-PIRMotion] GPIO error:", err); return; }
+            if (value === 1) this.onMotionStart();
+            else this.onMotionEnd();
         });
 
-        let buf = "";
-        this.pirProcess.stdout.on("data", (data) => {
-            buf += data.toString();
-            let nl;
-            while ((nl = buf.indexOf("\n")) !== -1) {
-                const line = buf.slice(0, nl).trim();
-                buf = buf.slice(nl + 1);
-                if (!line) continue;
-                try {
-                    const msg = JSON.parse(line);
-                    if (msg.event === "motion_start") this.onMotionStart();
-                    else if (msg.event === "motion_end") this.onMotionEnd();
-                } catch { /* ignore malformed */ }
-            }
-        });
-
-        this.pirProcess.stderr.on("data", (d) => process.stderr.write(d.toString()));
-
-        this.pirProcess.on("exit", (code) => {
-            console.error(`[MMM-PIRMotion] pir_daemon exited (code ${code}) — restarting in 10 s`);
-            this.pirProcess = null;
-            setTimeout(() => this.startDaemon(), 10000);
-        });
+        console.log(`[MMM-PIRMotion] watching GPIO${this.config.gpioPin}`);
     },
 
     stop() {
         if (this.offTimer) clearTimeout(this.offTimer);
-        if (this.pirProcess) { this.pirProcess.kill("SIGTERM"); this.pirProcess = null; }
+        if (this.pir) { this.pir.unexport(); this.pir = null; }
     }
 });
