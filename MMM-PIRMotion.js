@@ -2,10 +2,11 @@
 
 Module.register("MMM-PIRMotion", {
     defaults: {
-        gpioPin: 36,                    /* Rock Pi 4 physical pin 13 = sysfs GPIO36 */
+        gpioChip: "/dev/gpiochip4",     /* Rock Pi 4: physical pin 13 = GPIO4_C6 -> bank 4 */
+        gpioPin: 22,                    /* line offset on gpioChip (C6 = 16 + 6 = 22) */
         timeout: 120,                   /* seconds before display turns off */
-        display: "HDMI-1",             /* xrandr / wlr-randr output name */
-        displayMethod: "xrandr",        /* "xrandr" or "wlr-randr" */
+        displayMethod: "dpms",          /* "dpms" (X11, xset), "xrandr" or "wlr-randr" */
+        display: "HDMI-1",              /* output name — only used by xrandr / wlr-randr */
         showIndicator: true,
         animateModules: false
     },

@@ -1,92 +1,82 @@
 # MMM-PIRMotion
 
-A [MagicMirror²](https://magicmirror.builders/) module that turns your display on and off automatically using an **HC-SR501 PIR motion sensor**. When motion is detected the HDMI output powers on instantly. After a configurable idle timeout with no motion, it shuts back off.
+A [MagicMirror²](https://magicmirror.builders/) module that turns your display on and off automatically using an **HC-SR501 PIR motion sensor**. When motion is detected the display powers on instantly. After a configurable idle timeout with no motion, it shuts back off. The timer is also armed at startup, so the display turns off after `timeout` seconds even if no motion is ever detected.
 
-GPIO edge interrupts are handled by the [`onoff`](https://www.npmjs.com/package/onoff) npm package — pure Node.js, no C code, no build step, zero CPU usage at idle.
+GPIO edge events are watched with the `gpiomon` CLI tool from the `gpiod` package — the modern Linux character device interface (`/dev/gpiochipN`). No deprecated sysfs, no polling, zero CPU usage at idle.
 
-Tested on **Rock Pi 4** running MagicMirror² with X11 (`xrandr`) and Wayland (`wlr-randr`).
+Tested on **Rock Pi 4** running Debian 11 with MagicMirror² under X11.
 
 ---
 
 ## Features
 
 - Instant display-on on motion (interrupt-driven, no polling)
-- Configurable timeout before display powers off
-- Zero CPU usage at idle — `onoff` uses Linux sysfs edge interrupts under the hood
-- No C compiler or build step required
+- Configurable timeout before display powers off — armed from startup, not just after first motion
+- Zero CPU usage at idle — kernel edge events via `/dev/gpiochipN`
+- Three display methods: `dpms` (X11 default, safest), `xrandr`, `wlr-randr` (Wayland)
 - Small indicator dot in the corner (green = motion active, grey = idle)
-- Supports both X11 (`xrandr`) and Wayland (`wlr-randr`)
+- Auto-restarts the GPIO watcher if it dies; clear error hints in the log
 
 ---
 
 ## Hardware
 
-### Required
-
-- HC-SR501 PIR motion sensor
-- Rock Pi 4 (or any SBC with Linux sysfs GPIO support)
-
-### Wiring
+### Wiring (Rock Pi 4)
 
 | HC-SR501 Pin | Rock Pi 4 Pin | Description |
 |---|---|---|
 | VCC | Pin 2 | 5 V power |
 | GND | Pin 6 | Ground |
-| OUT | Pin 13 | GPIO signal (sysfs GPIO36) |
+| OUT | Pin 13 | GPIO signal (GPIO4_C6) |
 
-> The HC-SR501 OUT pin goes HIGH when motion is detected and LOW when idle.
+> The HC-SR501 OUT pin goes HIGH (~3.3 V) when motion is detected.
 > Adjust the onboard sensitivity and delay potentiometers to your environment.
+> Note: the Rock Pi 4 header GPIOs are 3.0 V rated — the HC-SR501's 3.3 V output
+> works in practice, but a small voltage divider (e.g. 1k/2k) is the by-the-book option.
 
-### Rock Pi 4 GPIO reference
+### GPIO chip and line offset — IMPORTANT
 
-| Physical Pin | sysfs GPIO | Default? |
-|---|---|---|
-| 7 | GPIO32 | |
-| 11 | GPIO35 | |
-| **13** | **GPIO36** | **yes** |
+On the RK3399 every GPIO **bank** appears as its own gpiochip. The physical pin number is **not** the line offset:
 
-Change `gpioPin` in the config if you use a different pin.
+```
+Physical pin 13  =  GPIO4_C6  =  /dev/gpiochip4, line 22   (C6 -> 16 + 6 = 22)
+```
+
+Verify on the device:
+
+```bash
+gpiodetect                      # lists gpiochip0..gpiochip4
+gpioinfo /dev/gpiochip4         # line 22 should be unused
+gpiomon -r /dev/gpiochip4 22    # wave your hand -> prints RISING EDGE events
+```
+
+If `gpiomon` prints events when you wave, the wiring and chip/line are correct.
 
 ---
 
 ## Installation
 
-### 1. Clone the module
-
 ```bash
-cd ~/MagicMirror/modules
-git clone https://github.com/CuzImHarry/MMM-PIRMotion.git
-cd MMM-PIRMotion
+# 1. System dependencies (gpiomon + xset)
+sudo apt install -y gpiod x11-xserver-utils
+
+# 2. GPIO permissions (once) — see snippets.md for the udev gpio-group setup
+
+# 3. No npm dependencies needed — the module only uses built-in Node APIs
 ```
 
-### 2. Install dependencies
-
-```bash
-npm install onoff
-```
-
-### 3. Find your display output name
-
-```bash
-# X11
-xrandr | grep " connected"
-# e.g. HDMI-1 connected 1920x1080+0+0
-
-# Wayland
-wlr-randr
-```
-
-### 4. Add to config
+### Config
 
 ```js
 {
     module: "MMM-PIRMotion",
     position: "bottom_right",
     config: {
-        gpioPin: 36,
-        timeout: 120,
-        display: "HDMI-1",
-        displayMethod: "xrandr",
+        gpioChip: "/dev/gpiochip4", // Rock Pi 4 physical pin 13 -> bank 4
+        gpioPin: 22,                // line offset on gpioChip (GPIO4_C6)
+        timeout: 120,               // seconds until display off after last motion
+        displayMethod: "dpms",      // "dpms" (X11), "xrandr" or "wlr-randr"
+        display: "HDMI-1",          // only used by xrandr / wlr-randr
         showIndicator: true
     }
 }
@@ -94,43 +84,50 @@ wlr-randr
 
 ---
 
-## Configuration
+## Configuration options
 
 | Option | Type | Default | Description |
 |---|---|---|---|
-| `gpioPin` | `number` | `36` | sysfs GPIO number for the HC-SR501 OUT pin |
+| `gpioChip` | `string` | `"/dev/gpiochip4"` | GPIO chip device — find with `gpiodetect` |
+| `gpioPin` | `number` | `22` | Line offset on `gpioChip` for the HC-SR501 OUT pin |
 | `timeout` | `number` | `120` | Seconds after last motion before display turns off |
-| `display` | `string` | `"HDMI-1"` | Display output name (from `xrandr` or `wlr-randr`) |
-| `displayMethod` | `string` | `"xrandr"` | `"xrandr"` for X11, `"wlr-randr"` for Wayland |
+| `displayMethod` | `string` | `"dpms"` | `"dpms"` (X11 `xset`, recommended), `"xrandr"`, `"wlr-randr"` |
+| `display` | `string` | `"HDMI-1"` | Output name — only used by `xrandr`/`wlr-randr` |
 | `showIndicator` | `boolean` | `true` | Show a small status dot in the bottom-right corner |
-| `animateModules` | `boolean` | `false` | Fade out all MM content when display is flagged off |
+| `animateModules` | `boolean` | `false` | Fade out all MM content while display is flagged off |
+
+### Why `dpms` is the default
+
+`xrandr --output HDMI-1 --off` removes the only X output — Electron can lose its
+rendering surface and misbehave when the output comes back (especially with the
+Mali-T860 driver on this board). `xset dpms force off` just powers down the panel
+while the X screen stays intact, which is far more robust for a kiosk. The module
+disables the X screensaver and DPMS auto-timeouts at startup so the panel is
+controlled exclusively by the sensor.
 
 ---
 
 ## Architecture
 
 ```
-HC-SR501 OUT pin
+HC-SR501 OUT (rising edge per movement)
       │
       ▼
-Rock Pi 4 GPIO (sysfs edge="both")
-      │  onoff.Gpio.watch() — kernel interrupt, zero CPU idle
+/dev/gpiochip4 line 22  (kernel edge event)
+      │
       ▼
-node_helper.js  (Node.js)
-      │  xrandr --output HDMI-1 --auto / --off
-      │  configurable timeout
+stdbuf -oL gpiomon -r   (single long-running watcher, line-buffered)
+      │  stdout line per event
       ▼
-MMM-PIRMotion.js  (browser)
-      │  indicator dot  +  body class toggle
+node_helper.js
+      │  every event: display ON + (re)start off-timer
+      │  timer expiry: xset dpms force off
+      ▼
+MMM-PIRMotion.js (browser) — indicator dot + optional body class
 ```
 
----
-
-## How it works
-
-The [`onoff`](https://www.npmjs.com/package/onoff) package configures the GPIO pin as an input with edge detection set to `"both"` (rising and falling). Internally it opens `/sys/class/gpio/gpioN/value` and uses `epoll` to wait for the kernel interrupt — the process sleeps completely until the hardware fires, using no CPU.
-
-When the HC-SR501 pulls its OUT pin HIGH (motion detected), `onoff` fires the callback with `value = 1`. On the falling edge (no motion), `value = 0`. The node helper then calls `xrandr` to switch the display and starts/cancels the off-timer accordingly.
+`stdbuf -oL` matters: `gpiomon` block-buffers stdout when piped, so without it
+events would sit in libc's buffer instead of reaching the node helper.
 
 ---
 
@@ -138,12 +135,17 @@ When the HC-SR501 pulls its OUT pin HIGH (motion detected), `onoff` fires the ca
 
 | Notification | Payload | Description |
 |---|---|---|
-| `MOTION` | `{ active: true/false }` | Fired on every motion start/end |
+| `MOTION` | `{ active: true/false }` | `true` on first motion after idle, `false` when timeout expires |
 | `DISPLAY_STATE` | `{ on: true/false }` | Fired when the display actually changes state |
 
-Other modules can listen for `MOTION` to react to presence, e.g. to refresh data or trigger animations when someone walks up.
-
 ---
+
+## Troubleshooting
+
+- **Display never turns off:** check `pm2 logs MagicMirror` for `[MMM-PIRMotion]` lines. You should see `watching /dev/gpiochip4 line 22` at startup.
+- **No motion events:** test outside MM with `gpiomon -r /dev/gpiochip4 22` and wave. No output → wiring or chip/line wrong.
+- **`gpiomon exited immediately`:** permissions (see snippets.md), wrong line, or the line is claimed by another driver — check `gpioinfo /dev/gpiochip4`.
+- **Display turns off but not back on:** verify `DISPLAY=:0 xset dpms force on` works from an SSH session as the MM user.
 
 ## License
 
